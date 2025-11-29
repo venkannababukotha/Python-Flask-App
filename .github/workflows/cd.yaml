@@ -1,4 +1,4 @@
-name: CD — Update GitOps Repo (GitHub)
+name: CD — Update GitOps Repo (GitHub) 
 
 on:
   repository_dispatch:
@@ -25,7 +25,7 @@ jobs:
 
     env:
       # change these to match your repo structure
-      GIT_CLONE_DIR: Python-Flask-App/gitops-repo
+      GIT_CLONE_DIR: gitops-repo
       K8S_DEPLOYMENT_PATH: k8s/deployment.yaml
 
     steps:
