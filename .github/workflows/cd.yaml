@@ -25,7 +25,7 @@ jobs:
 
     env:
       # change these to match your repo structure
-      GIT_CLONE_DIR: gitops-repo
+      GIT_CLONE_DIR: Python-Flask-App/gitops-repo
       K8S_DEPLOYMENT_PATH: k8s/deployment.yaml
 
     steps:
