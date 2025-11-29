@@ -1,0 +1,57 @@
+name: CI/CD — Build, Push & Update GitOps
+
+# run only when main is pushed 
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  imageName: 'demo-app'
+  acrRegistry: 'argocd211.azurecr.io'    # from your variables
+
+jobs:
+  build-and-push:
+    name: CI — Build & Push Image
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.set-image.outputs.imageTag }}   # expose image tag for downstream jobs
+      full_image: ${{ steps.set-image.outputs.fullImage }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine image tag (use run number to mimic Build.BuildId)
+        id: determine-tag
+        run: |
+          # prefer a numeric run number (similar to Build.BuildId)
+          echo "run_number=${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Log in to ACR (docker)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.acrRegistry }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push image to ACR
+        id: build-push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.acrRegistry }}/${{ env.imageName }}:${{ github.run_number }}
+            ${{ env.acrRegistry }}/${{ env.imageName }}:latest
+
+      - name: Set image tag outputs
+        id: set-image
+        run: |
+          IMAGE_TAG="${{ github.run_number }}"
+          FULL_IMAGE="${{ env.acrRegistry }}/${{ env.imageName }}:${IMAGE_TAG}"
+          echo "imageTag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "fullImage=${FULL_IMAGE}" >> $GITHUB_OUTPUT
