@@ -1,0 +1,118 @@
+name: CD — Update GitOps Repo (GitHub)
+
+on:
+  repository_dispatch:
+    types: [image-built]
+  workflow_dispatch:
+    inputs:
+      full_image:
+        description: 'Full image to write to GitOps (e.g. argocd211.azurecr.io/demo-app:123)'
+        required: false
+        default: ''
+
+# Need write access to push into the target repository
+permissions:
+  contents: write
+
+concurrency:
+  group: cd-update-${{ github.event.client_payload.image_tag || github.event.inputs.full_image || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  update-gitops:
+    name: Update GitOps repo (GitHub)
+    runs-on: ubuntu-latest
+
+    env:
+      # change these to match your repo structure
+      GIT_CLONE_DIR: gitops-local
+      K8S_DEPLOYMENT_PATH: k8s/deployment.yaml
+
+    steps:
+      - name: Determine FULL_IMAGE
+        id: determine
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "Triggered by repository_dispatch"
+            echo "full_image=${{ github.event.client_payload.full_image }}" >> $GITHUB_ENV
+            echo "image_tag=${{ github.event.client_payload.image_tag }}" >> $GITHUB_ENV
+          else
+            echo "Triggered manually"
+            echo "full_image=${{ github.event.inputs.full_image }}" >> $GITHUB_ENV
+            echo "image_tag=" >> $GITHUB_ENV
+          fi
+
+          if [ -z "${FULL_IMAGE:-}" ]; then
+            echo "FULL_IMAGE is empty; current payload/inputs:"
+            echo "client_payload.full_image: ${{ github.event.client_payload.full_image }}"
+            echo "workflow input full_image: ${{ github.event.inputs.full_image }}"
+          fi
+
+      - name: Fail early if full image empty
+        if: ${{ env.FULL_IMAGE == '' && github.event.inputs.full_image == '' && github.event.client_payload.full_image == '' }}
+        run: |
+          echo "ERROR: full_image is empty. Provide a full_image via repository_dispatch payload or workflow_dispatch input."
+          exit 1
+
+      - name: Checkout GitOps repository
+        # The repo you want to push to, e.g. "your-org/gitops-repo"
+        # Use a secret GITOPS_REPO (owner/repo) or hardcode if you prefer.
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.GITOPS_REPO }}        # must be set to "owner/repo"
+          token: ${{ secrets.GITOPS_TOKEN }}            # PAT with repo push rights
+          path: ${{ env.GIT_CLONE_DIR }}
+          fetch-depth: 0
+
+      - name: Show repository and file (debug)
+        run: |
+          echo "Cloned: ${{ secrets.GITOPS_REPO }} into ${GIT_CLONE_DIR}"
+          ls -la ${GIT_CLONE_DIR}
+          echo "Showing file head (if exists):"
+          head -n 40 ${GIT_CLONE_DIR}/${K8S_DEPLOYMENT_PATH} || true
+
+      - name: Update deployment image
+        run: |
+          set -euo pipefail
+          cd ${GIT_CLONE_DIR}
+          # safe backup
+          cp "${K8S_DEPLOYMENT_PATH}" "${K8S_DEPLOYMENT_PATH}.bak" || true
+
+          # Build FULL_IMAGE variable from event or input
+          if [ -n "${{ github.event.client_payload.full_image }}" ]; then
+            FULL_IMAGE="${{ github.event.client_payload.full_image }}"
+          else
+            FULL_IMAGE="${{ github.event.inputs.full_image }}"
+          fi
+
+          echo "Updating ${K8S_DEPLOYMENT_PATH} -> image: ${FULL_IMAGE}"
+
+          # This sed replaces the first occurrence of "image:" line. Adjust regex if your manifest has indentation.
+          # Preserve indentation: capture leading whitespace and replace value after "image:"
+          sed -E -i.bak "0,/^[[:space:]]*image:[[:space:]]*/ s|(^[[:space:]]*image:[[:space:]]*).*|\1${FULL_IMAGE}|" "${K8S_DEPLOYMENT_PATH}"
+
+          echo "--- diff ---"
+          git --no-pager diff -- "${K8S_DEPLOYMENT_PATH}" || true
+
+      - name: Commit & push changes
+        run: |
+          set -euo pipefail
+          cd ${GIT_CLONE_DIR}
+          # configure identity
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions - CD"
+
+          if git diff --quiet -- "${K8S_DEPLOYMENT_PATH}"; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git add "${K8S_DEPLOYMENT_PATH}"
+          git commit -m "Update image to ${FULL_IMAGE} via GitHub Actions CD"
+          git push origin HEAD:main
+          echo "Pushed updated manifest to ${GITOPS_REPO}."
+
+      - name: Success note
+        run: echo "CD workflow completed."
