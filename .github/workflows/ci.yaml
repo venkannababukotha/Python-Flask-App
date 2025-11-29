@@ -55,3 +55,17 @@ jobs:
           FULL_IMAGE="${{ env.acrRegistry }}/${{ env.imageName }}:${IMAGE_TAG}"
           echo "imageTag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
           echo "fullImage=${FULL_IMAGE}" >> $GITHUB_OUTPUT
+        # add this step at the end of your build-and-push job (after set-image)
+      - name: Notify CD workflow (repository_dispatch)
+        if: ${{ always() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # default token, should work for same-repo dispatch
+          FULL_IMAGE: ${{ steps.set-image.outputs.fullImage }}
+          IMAGE_TAG: ${{ steps.set-image.outputs.imageTag }}
+        run: |
+          echo "Dispatching image-built event with image: $FULL_IMAGE"
+          curl -s -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
+            -d '{"event_type":"image-built","client_payload":{"full_image":"'"${FULL_IMAGE}"'","image_tag":"'"${IMAGE_TAG}"'","source_workflow":"'"${{ github.workflow }}"'"}}'
