@@ -1,4 +1,4 @@
-name: CI/CD — Build, Push & Update GitOps
+name: CI/CD — Build, Push & Update GitOps 
 
 # run only when main is pushed 
 on:
